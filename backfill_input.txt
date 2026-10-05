@@ -1,0 +1,2 @@
+# Paste all the WhatsApp messages from Thursday onwards into this file and save it.
+# Then run: node backfill.js
