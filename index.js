@@ -285,15 +285,32 @@ async function handleMessage(msg, sourceLabel = 'Live') {
     return;
   }
 
-  if (parsed.tktNo && processedTickets.has(parsed.tktNo.toUpperCase())) {
+  const incomingTkt = parsed.tktNo ? parsed.tktNo.toUpperCase().trim() : null;
+  const incomingNewSn = parsed.newSn && parsed.newSn.length >= 8 ? parsed.newSn.toUpperCase().trim() : null;
+
+  // 1. DUPLICATE CHECK: Ignore if already processed previously
+  if (incomingTkt && processedTickets.has(incomingTkt)) {
     console.log(`   ⏩ [Duplicate Ignored] Ticket ${parsed.tktNo} already processed previously.`);
     return;
   }
 
-  if (parsed.newSn && parsed.newSn.length >= 8 && processedTickets.has(parsed.newSn.toUpperCase())) {
+  if (incomingNewSn && processedTickets.has(incomingNewSn)) {
     console.log(`   ⏩ [Duplicate Ignored] Serial Number ${parsed.newSn} already processed previously.`);
     return;
   }
+
+  // 2. QUEUE CHECK: Ignore if already waiting in queue to be pushed
+  const alreadyInQueue = pushQueue.some(item => 
+    (incomingTkt && item.tktNo && item.tktNo.toUpperCase().trim() === incomingTkt) ||
+    (incomingNewSn && item.newSn && item.newSn.toUpperCase().trim() === incomingNewSn)
+  );
+  if (alreadyInQueue) {
+    console.log(`   ⏩ [Duplicate Ignored] ${parsed.tktNo || parsed.newSn} is already pending in push queue.`);
+    return;
+  }
+
+  // 3. INSTANT LOCK: Mark in memory and disk IMMEDIATELY so rapid double-sends within ms are blocked
+  recordProcessedTicket(parsed.tktNo, parsed.newSn);
 
   console.log(`\n====================================================`);
   console.log(`📩 New Router Ticket: ${parsed.tktNo}`);
