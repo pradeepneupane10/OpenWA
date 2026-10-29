@@ -24,8 +24,25 @@ require('dotenv').config();
 
 const PORT = process.env.PORT || 3001;
 const WEBHOOK_URL = process.env.GOOGLE_SCRIPT_WEBHOOK_URL;
-const TARGET_GROUP_JID = process.env.TARGET_GROUP_JID || '120363028366417731@g.us';
-const TARGET_GROUP_NAME = process.env.TARGET_GROUP_NAME || 'Router Changed Thapathali';
+const ROUTER_GROUP_JID = process.env.TARGET_GROUP_JID || '120363028366417731@g.us';
+const ROUTER_GROUP_NAME = process.env.TARGET_GROUP_NAME || 'Router Changed Thapathali';
+
+const IPTV_GROUP_JID = '120363042361547566@g.us';
+const IPTV_GROUP_NAME = 'IPTV-Registration';
+
+// Whitelist: strictly process IPTV tickets only from these 7 team members
+const IPTV_TEAM_PATTERNS = [
+  'ajit',
+  'chandramani',
+  'rajesh',
+  'rj mhrzn',
+  'sabin',
+  'sanjeev',
+  'sanzeev',
+  'shashikant',
+  'shashi',
+  'sunil'
+];
 
 // Local cache for duplicate tickets
 const PROCESSED_FILE = path.join(__dirname, 'processed_tickets.json');
@@ -116,12 +133,12 @@ app.get('/', (req, res) => {
     <body>
       <div class="card">
         <h1>📱 WhatsApp Bridge</h1>
-        <div class="target">Locked Group: <strong>${TARGET_GROUP_NAME}</strong></div><br/>
+        <div class="target">Monitoring: <strong>${ROUTER_GROUP_NAME}</strong> & <strong>${IPTV_GROUP_NAME}</strong></div><br/>
         <div class="status ${connectionStatus === 'Connected' ? 'connected' : 'waiting'}">Status: ${connectionStatus}</div>
         
         ${
           connectionStatus === 'Connected'
-            ? '<p style="color:#059669;font-weight:600;font-size:1.1rem;">✅ Connected & actively monitoring group for router tickets!</p>'
+            ? '<p style="color:#059669;font-weight:600;font-size:1.05rem;">✅ Connected & monitoring Router & IPTV tickets!</p>'
             : `
               ${currentPairingCode ? `
                 <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:1rem;">
@@ -170,7 +187,7 @@ app.post('/pair', async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🌐 Bridge Web Dashboard running at: http://localhost:${PORT}`);
   console.log(`📱 On your local Wi-Fi, open: http://10.20.252.139:${PORT}`);
-  console.log(`🎯 Locked to group: "${TARGET_GROUP_NAME}"\n`);
+  console.log(`🎯 Monitoring: "${ROUTER_GROUP_NAME}" & "${IPTV_GROUP_NAME}"\n`);
 });
 
 // Helper: Extract text regardless of how WhatsApp wrapped the message
@@ -187,78 +204,101 @@ function extractText(message) {
   return '';
 }
 
-// Helper: Parse technician message
+// Helper: Parse technician message (handles Router ALCL serials and IPTV Skycom/NETTV MACs)
 function parseTechnicianMessage(rawText) {
-  const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const cleaned = rawText.trim();
+  const lines = cleaned.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
   // 1. Ticket Number
-  const tktMatch = rawText.match(/\bTKT\s*(\d+)\b/i);
+  const tktMatch = cleaned.match(/\bTKT\s*(\d+)\b/i);
   const tktNo = tktMatch ? `TKT${tktMatch[1]}` : '';
 
-  // 2. UserID
-  const userMatch = rawText.match(/\b(?!(?:TKT|ALCL))([A-Za-z]{2,4}\d{6,}|\d{10})\b/i);
-  let userId = userMatch ? userMatch[1] : '';
-  if (!userId && lines.length >= 2 && !/^(TKT|S\/?N|Old|New|Note)/i.test(lines[1])) {
-    userId = lines[1];
-  }
-
-  // 3. New SN
+  // 2. New SN / MAC
   let newSn = '';
-  let m = rawText.match(/New\s*SN\s*[:\-\s]*([A-Za-z0-9]+)/i);
+  let m = cleaned.match(/(?:New\s*(?:MAC|TV\s*MAC|SN|Router|STB)|S\/?N\s*\(\s*new\s*\)|MAC\s*\(\s*new\s*\))\s*[:\-\s]*([A-Za-z0-9]+)/i);
   if (m) newSn = m[1];
   else {
-    m = rawText.match(/S\/?N\s*[:\-\s]*([A-Za-z0-9]+)\s*\(\s*new\s*\)/i);
+    m = cleaned.match(/MAC\s*[:\-\s]*([A-Za-z0-9]+)\s*\(\s*new\s*\)/i);
     if (m) newSn = m[1];
     else {
-      m = rawText.match(/\b([A-Za-z0-9]{8,})\s+New(?:\s+dual|\s+wifi\s*6)?\b/i);
+      m = cleaned.match(/\b([A-Za-z0-9]{8,})\s+New(?:\s+dual|\s+wifi\s*6)?\b/i);
       if (m) newSn = m[1];
     }
   }
 
-  // 4. Old SN
+  // 3. Old SN / MAC
   let oldSn = '';
-  m = rawText.match(/Old\s*SN\s*[:\-\s]*([A-Za-z0-9]+)/i);
+  m = cleaned.match(/(?:Old\s*(?:MAC|TV\s*MAC|SN|Router|STB)|S\/?N\s*\(\s*old\s*\)|MAC\s*\(\s*old\s*\))\s*[:\-\s]*([A-Za-z0-9]+)/i);
   if (m) oldSn = m[1];
   else {
-    m = rawText.match(/S\/?N\s*[:\-\s]*([A-Za-z0-9]+)\s*\(\s*old\s*\)/i);
+    m = cleaned.match(/MAC\s*[:\-\s]*([A-Za-z0-9]+)\s*\(\s*old\s*\)/i);
     if (m) oldSn = m[1];
     else {
-      m = rawText.match(/\b([A-Za-z0-9]{8,})\s+Old(?:\s+dual)?\b/i);
+      m = cleaned.match(/\b([A-Za-z0-9]{8,})\s+Old(?:\s+dual)?\b/i);
       if (m) oldSn = m[1];
     }
   }
 
-  // 5. Customer Name
+  // 4. UserID
+  let userId = '';
+  const idRegex = /\b([A-Za-z]{2,5}\d{5,}[A-Za-z]?|\d{9,12})\b/g;
+  let match;
+  while ((match = idRegex.exec(cleaned)) !== null) {
+    const val = match[1];
+    if (val.toUpperCase().startsWith('TKT')) continue;
+    if (newSn && val.toUpperCase() === newSn.toUpperCase()) continue;
+    if (oldSn && val.toUpperCase() === oldSn.toUpperCase()) continue;
+    userId = val;
+    break;
+  }
+  if (!userId && lines.length >= 2 && !/^(TKT|S\/?N|Old|New|Note|MAC)/i.test(lines[1])) {
+    userId = lines[1];
+  }
+
+  // 5. Remarks / Note
+  let remarks = '';
+  const noteMatch = cleaned.match(/(?:Note|Remarks?|Issue)\s*[:\-]\s*(.+)/i);
+  if (noteMatch) {
+    remarks = noteMatch[1].trim();
+  } else {
+    for (const l of lines) {
+      if (/(box\s*damaged|faulty|no\s*light|upgrade|wifi|stb)/i.test(l)) {
+        if (!l.match(/^(?:TKT|New|Old|MAC|S\/?N)/i) && l !== userId) {
+          remarks = l;
+          break;
+        }
+      }
+    }
+    if (!remarks) {
+      const wifiMatch = cleaned.match(/(WiFi\s*6\s*upgrade|Upgrade\s*to\s*wifi-?6)/i);
+      if (wifiMatch) remarks = wifiMatch[1];
+    }
+  }
+
+  // 6. Customer Name
+  const knownTechs = /^(?:chandramani|sabin|ajit|rajesh|sanjeev|sanzeev|shashikant|sunil)/i;
   let name = '';
   for (const line of lines) {
     if (tktNo && line.toUpperCase().includes(tktNo.toUpperCase())) continue;
-    if (userId && line.toLowerCase() === userId.toLowerCase()) continue;
+    if (userId && line.toUpperCase().includes(userId.toUpperCase())) continue;
     if (newSn && line.toUpperCase().includes(newSn.toUpperCase())) continue;
     if (oldSn && line.toUpperCase().includes(oldSn.toUpperCase())) continue;
-    if (/^(Old|New|Note|S\/?N|Wifi|Done|Please|Still|Check)/i.test(line)) continue;
+    if (knownTechs.test(line)) continue;
+    if (/^(Old|New|Note|Remarks?|Issue|S\/?N|MAC|Wifi|Done|Please|Still|Check|Internet|Skycom|STB)/i.test(line)) continue;
+    if (line.match(/^[\d\s\-\+\(\)\:]+$/)) continue;
     if (/[A-Za-z]/.test(line)) {
       name = line;
       break;
     }
   }
 
-  // 6. Remarks
-  let remarks = '';
-  const noteMatch = rawText.match(/Note\s*[:\-]\s*(.+)/i);
-  if (noteMatch) {
-    remarks = noteMatch[1].trim();
-  } else {
-    const wifiMatch = rawText.match(/(WiFi\s*6\s*upgrade|Upgrade\s*to\s*wifi-?6)/i);
-    if (wifiMatch) remarks = wifiMatch[1];
-  }
-
   return {
     tktNo,
     userId,
     name,
-    newSn: newSn.toUpperCase(),
-    oldSn: oldSn.toUpperCase(),
-    remarks: remarks || 'Upgrade to wifi-6'
+    newSn: newSn ? newSn.toUpperCase() : '',
+    oldSn: oldSn ? oldSn.toUpperCase() : '',
+    remarks: remarks || (newSn.startsWith('900') || newSn.startsWith('D076') ? 'STB replacement' : 'Upgrade to wifi-6')
   };
 }
 
@@ -266,12 +306,27 @@ async function handleMessage(msg, sourceLabel = 'Live') {
   if (msg.key.fromMe) return;
 
   const jid = msg.key.remoteJid;
-  if (jid !== TARGET_GROUP_JID) return;
+  const isRouterGroup = jid === ROUTER_GROUP_JID;
+  const isIptvGroup = jid === IPTV_GROUP_JID;
+
+  if (!isRouterGroup && !isIptvGroup) return;
+
+  const pushName = msg.pushName || '';
+  const groupLabel = isIptvGroup ? IPTV_GROUP_NAME : ROUTER_GROUP_NAME;
+
+  // STRICT WHITELIST for IPTV group: only process if sent by our 7 team members
+  if (isIptvGroup) {
+    const isTeamMember = IPTV_TEAM_PATTERNS.some(pat => pushName.toLowerCase().includes(pat));
+    if (!isTeamMember) {
+      console.log(`\n💬 [${sourceLabel}] [${groupLabel}] Ignored message from non-team member: "${pushName}"`);
+      return;
+    }
+  }
 
   const messageText = extractText(msg.message);
   if (!messageText) return;
 
-  console.log(`\n💬 [${sourceLabel}] Group Message from ${msg.pushName || 'Technician'}:`);
+  console.log(`\n💬 [${sourceLabel}] [${groupLabel}] Message from ${pushName || 'Technician'}:`);
   console.log(`   "${messageText.replace(/\n/g, ' ')}"`);
 
   if (!messageText.toUpperCase().includes('TKT')) {
@@ -295,7 +350,7 @@ async function handleMessage(msg, sourceLabel = 'Live') {
   }
 
   if (incomingNewSn && processedTickets.has(incomingNewSn)) {
-    console.log(`   ⏩ [Duplicate Ignored] Serial Number ${parsed.newSn} already processed previously.`);
+    console.log(`   ⏩ [Duplicate Ignored] Serial/MAC Number ${parsed.newSn} already processed previously.`);
     return;
   }
 
@@ -313,7 +368,8 @@ async function handleMessage(msg, sourceLabel = 'Live') {
   recordProcessedTicket(parsed.tktNo, parsed.newSn);
 
   console.log(`\n====================================================`);
-  console.log(`📩 New Router Ticket: ${parsed.tktNo}`);
+  console.log(`📩 New [${groupLabel}] Ticket: ${parsed.tktNo}`);
+  console.log(`   Sender   : ${pushName}`);
   console.log(`   UserID   : ${parsed.userId}`);
   console.log(`   Name     : ${parsed.name}`);
   console.log(`   New SN   : ${parsed.newSn}`);
@@ -324,9 +380,9 @@ async function handleMessage(msg, sourceLabel = 'Live') {
   pushQueue.push({
     ...parsed,
     rawText: messageText,
-    group: TARGET_GROUP_NAME,
+    group: groupLabel,
     sender: msg.key.participant || jid,
-    pushName: msg.pushName || 'Technician',
+    pushName: pushName || 'Technician',
     timestamp: msg.messageTimestamp
   });
 
@@ -349,19 +405,10 @@ async function startWhatsApp() {
   globalSock = sock;
   sock.ev.on('creds.update', saveCreds);
 
-  if (!sock.authState.creds.registered) {
-    setTimeout(async () => {
-      try {
-        console.log('Requesting pairing code for 9779820105044...');
-        const code = await sock.requestPairingCode('9779820105044');
-        currentPairingCode = code;
-        console.log('\n======================================================');
-        console.log(`🔑 8-CHARACTER PAIRING CODE: ${code}`);
-        console.log('======================================================\n');
-      } catch (err) {
-        console.log('Notice requesting pairing code:', err.message);
-      }
-    }, 3500);
+  if (sock.authState.creds.registered) {
+    connectionStatus = 'Connecting to WhatsApp...';
+  } else {
+    connectionStatus = 'Waiting for login';
   }
 
   sock.ev.on('connection.update', async (update) => {
@@ -404,7 +451,7 @@ async function startWhatsApp() {
       currentQR = null;
       currentPairingCode = null;
       console.log('\n✅ WhatsApp Connected successfully!');
-      console.log(`🎯 Locked to JID: ${TARGET_GROUP_JID} ("${TARGET_GROUP_NAME}")\n`);
+      console.log(`🎯 Monitoring: "${ROUTER_GROUP_NAME}" & "${IPTV_GROUP_NAME}"\n`);
     }
   });
 
