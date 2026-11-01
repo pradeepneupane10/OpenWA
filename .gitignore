@@ -7,6 +7,8 @@ node_modules/
 # WhatsApp Auth Session Tokens (NEVER commit to git!)
 auth_info/
 
-# Logs
+# Logs & runtime caches
 *.log
 npm-debug.log*
+known_contacts.json
+last_anchors.json
